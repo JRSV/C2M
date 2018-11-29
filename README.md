@@ -1,2 +1,2 @@
 # C2M
-List class to process music material with a some Chord -> to -> Measure
+LISP class to process music material with a 'some Chord -> to -> Measure' algorithm. 
