@@ -61,8 +61,18 @@
 		)))
     (setq music (nreverse music))
     music))
-
-
+(defun 2-note (in-chord)
+  (let* ((chord (list in-chord)))
+    (setq chord (flatten chord))
+    (if (and (listp chord) (= (length chord) 1))
+	(progn ;;(print "here")
+	       (setq chord (midi-to-note (first chord)))
+	       )
+	(progn ;;(print "there")
+	       (setq chord (loop :for note :in chord
+			      :collect (midi-to-note note)))
+	       ))	
+    ))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;
 ;; The DATA STRUCTURE of the C2M class
@@ -74,6 +84,8 @@
    (measures :accessor C2M-measures)
    (time-sig :accessor C2M-time-sig)
    (req-ratio :accessor C2M-req-ratio)
+   (path :accessor C2M-path)
+   (name :accessor C2M-name)
 
 ;; initform (C2M-time-sig )) ;; need to figure out initform
 ;; Methods
@@ -311,6 +323,7 @@
 	      (push beat out-measures)
 	      ))
     out-measures
+   
     ))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -323,147 +336,163 @@
 ;;______________________________________________________________________
 (defmethod render-local  ((object C2M))
   (let* ((measures (C2M-measures object))
-	 ;;(beat-dur (C2M-beat-unit object))
+	 (beat-dur (C2M-beat-unit object))
+	 (path (C2M-path object))
+	 (name (C2M-name object))
 	 (time-sig (C2M-time-sig object))
-	 ;;(render-name in-render-name)
 	 (out-measures '())
-	 ;;(tempo in-tempo)
 	 (ties '())
-	 (prev-tie 0)
+	 (prev-tie '(0 0 0))
 	 (next-tie 0)
-	 (prev-note-event 0)
-	 time-sig bar measure-noTS
-	 output-score midifile-name
-	 event-number base-path
-	 note-event tie
-	 beat dur)   
-    ;;(setq base-path (format base-path "~a/score/" path))
-    ;;(setq midifile-name (format nil "~a/midi/~a.mid" base-path name))
-    ;; (loop for voice in measures
-    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-    (print time-sig)
+	 (prev-note 0)
+	 bar output-score event-number
+	 note-event curr-tie tie)
+    ;; this loop creates the information of notes tied to
+    ;; consolidate repeats
     (setq ties '())
     (loop for measure in measures
        for m-number from 0 do
-	 (setq beat-dur (* (/ (length measure) (nth 0 time-sig))
-			   (nth 1 time-sig)))
-	 (setq bar '())
-	 (loop for beat in measure
-	    for b-number from 0 do
-	      (setq tie '())
-	      (setq tie (push b-number tie))
-	      (cond ((not (equal beat 'R))		    
-		     (setq bar (push (make-event (2-note beat) beat-dur)
-				     bar))
-		     (setq tie (push 1 tie)
-			   tie (push (2-note beat) tie)))
-		    ((equal beat 'R)
-		     (setq bar (push (make-event nil beat-dur
-						 :is-rest t)
-				     bar))
-		     (setq tie (push 0 tie)
-			   tie (push beat tie))))
-	      (setq tie (nreverse tie))
-	      (push tie ties))
-	 (setq bar (nreverse bar)
-	       bar (make-rthm-seq-bar (push time-sig bar)))
-	 (push bar out-measures)
-	 )
-    (setq out-measures (nreverse out-measures))
-    (setq output-score (bars-to-sc out-measures
-				   :sc-name  (make-symbol render-name)
-				   ;;:player render-name
-	 			   :instrument 'piano
-					;:tempo tempo
-				   ))
-    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; TIE NOTES POST-GEN
+    	 (loop for beat in measure
+    	    for b-number from 0 do
+    	      (setq tie '())
+    	      (setq tie (push b-number tie))
+    	      (cond ((not (equal beat 'R))		    
+    		     (setq tie (push 1 tie)
+    			   tie (push (2-note beat) tie)))
+    		    ((equal beat 'R)
+    		     (setq tie (push 0 tie)
+    			   tie (push beat tie))))
+    	      (setq tie (nreverse tie))
+    	      (push tie ties)))
     (setq ties (nreverse ties))
-    (next-event output-score 'player-one nil t)
-    (setq event-number 0)
-    ;;This loop turns on the corresponding Ties
-    (loop for next-e = (next-event output-score 'player-one)
-       while next-e for tie in ties do
-    	 (if (slot-value next-e 'is-rest)
-    	     (progn (format nil "============= SILENCE")
-    		    (format nil "~%Event: ~a Rest: ~a"
-    			    (incf event-number)
-			    (slot-value next-e 'is-rest)))
-    	     (if (get-pitch-symbol next-e)
-    		 (progn (format nil "*******************************NOTE")
-    			(setq next-tie (nth (+ event-number 1) ties))
-    			(format nil "~%E#: ~a | Prev Tie: ~a | Tie: ~a | Next Tie: ~a |"
-    				event-number (nth 1 prev-tie) (nth 1 tie)(nth 1 next-tie))
-    			(cond ((and (not (equal (nth 2 prev-tie) (nth 2 tie)))
-    				   (equal (nth 2 tie) (nth 2 next-tie)))
-    			       (format nil " ---- FIRST of Repeted Group ----")
-    			       (format nil "~%Prev: ~a~%Curr:  ~a~%Next:     ~a~%"
-    				       (nth 2 prev-tie)
-    				       (nth 2 tie)
-    				       (nth 2 next-tie))
-    			       (setf (is-tied-from next-e) t)
-    			       (setf (is-tied-to next-e) t)))   
-    			(cond ((and (equal (nth 2 prev-tie) (nth 2 tie))
-    				    (equal (nth 2 tie) (nth 2 next-tie)))
-    			      (format nil " ------- MIDDLE Group -------")
-    			      (format nil "~%Prev: ~a~%Curr:  ~a~%Next:     ~a~%"
-    				      (nth 2 prev-tie)
-    				      (nth 2 tie)
-    				      (nth 2 next-tie))
-    			      (setf (is-tied-from next-e) t)
-    			      (setf (is-tied-to next-e) t)))
-    			(cond ((and (equal (nth 2 prev-tie) (nth 2 tie))
-    				    (not (equal (nth 2 tie) (nth 2 next-tie))))
-    			       (format nil " ---- LAST of Repeted Group ----")
-    			       (format nil "~%Prev: ~a~%Curr:  ~a~%Next:     ~a~%"
-    				       (nth 2 prev-tie)
-    				       (nth 2 tie)
-    				       (nth 2 next-tie))
-    			       (setf (is-tied-from next-e) nil)
-    			       (setf (is-tied-to next-e) t)))
-    			(setq prev-note-event note-event)
-    			(incf event-number)
-    		 	)))
-    	 (setq prev-tie tie))
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; SCORE GENERATION
-    (handle-ties output-score)
-    (rebar output-score)
-    ;;(setf (title output-score) (format nil "~a" render-name))
-    ;;(midi-play output-score :midi-file midifile-name)
-    ;;(write-lp-data-for-all output-score)
-    ;;(lp-display output-score :base-path base-path)
-    output-score
+    (setq  event-number 0)
+    (print time-sig)
+    (setq m-number 0)
+
+;;;;;
+    
+    (loop for measure in measures do
+	 (incf m-number)
+	 (format t "~% ................. Measure ~a" m-number)
+         ;; (setq beat-dur (* (/ (length measure) (nth 0 time-sig))
+    	 ;; 		  (nth 1 time-sig)))
+	 (format t "~%+++++++++++++++++++++++ ~a  ~a ~%~a " beat-dur (length measure) measure)
+    	 (setq bar '())
+    	 (loop for beat in measure
+	    for b-number from 1 do
+    	      (setq curr-tie (nth event-number ties))
+    	      (setq next-tie (nth (+ event-number 1) ties))
+    	      (if (equal beat 'R)
+		  (progn (format t "~% ~a ************************************** REST" b-number)
+    			 (format t "~%E#: ~a | Prev Tie: ~a | Tie: ~a | Next Tie: ~a |"
+    				 (+ event-number 1)(nth 1 prev-tie)
+				 (nth 1 curr-tie)(nth 1 next-tie))
+			 (format t "~% -------------------- * SILENCE *")
+			 (setq bar (push (make-event nil beat-dur
+						     :is-rest t)
+					 bar)))
+    		  (progn (format t "~% ~a ************************************** NOTE" b-number)
+    			 (format t "~%E#: ~a | Prev Tie: ~a | Tie: ~a | Next Tie: ~a |"
+    				 (+ 1 event-number) (nth 1 prev-tie)
+				 (nth 1 curr-tie) (nth 1 next-tie))
+    			 (format t "~%Prev: ~a~%Curr: ~a~%Next: ~a~%"
+    				 (nth 2 prev-tie) (nth 2 curr-tie) (nth 2 next-tie))
+			 (when (and (not (equal (nth 2 prev-tie) (nth 2 curr-tie)))
+    			  	     (not (equal (nth 2 curr-tie) (nth 2 next-tie))))
+			   (setq bar (push (make-event (2-note beat) beat-dur
+						       :is-tied-to nil
+						       :is-tied-from nil
+						       )
+					   bar)))
+			 (when (and (not (equal (nth 2 prev-tie) (nth 2 curr-tie)))
+				    (equal (nth 2 curr-tie) (nth 2 next-tie)))
+    			   ;;(format t " -------------------- * FIRST *")
+			   ;;(format t "~% --")
+			   (setq bar (push (make-event (2-note beat) beat-dur
+						       :is-tied-to t
+						       :is-tied-from t
+						       )
+					   bar)))
+			 (when (and (equal (nth 2 prev-tie) (nth 2 curr-tie))
+    				     (equal (nth 2 curr-tie) (nth 2 next-tie)))
+    			   ;;(format t " -------------------- * MIDDLE")
+			   ;;(format t "~% --")
+    			   (setq bar (push (make-event (2-note beat) beat-dur
+						       :is-tied-to t
+						       :is-tied-from t
+						       )
+					   bar)))
+			 (when (and (equal (nth 2 prev-tie) (nth 2 curr-tie))
+    				    (not (equal (nth 2 curr-tie) (nth 2 next-tie))))
+    			   ;;(format t "~% ------------------- * LAST")
+			   ;;(format t "~% --")
+			   (setq bar (push (make-event (2-note beat) beat-dur
+						       :is-tied-to t
+						       :is-tied-from nil
+						       )
+					   bar)))))
+    	      (incf event-number)
+    	      (setq prev-tie (nth (- event-number 1) ties)))
+	 (setq bar (nreverse bar))
+	 (format t "~%LENGTH BAR : ~a" (length bar))
+	 (setq bar (make-rthm-seq-bar (push time-sig bar)))
+	 ;;(setq bar (consolidate-notes bar))
+	 ;;(setq bar (consolidate-rests bar))
+	 (push bar out-measures))
+    (setq out-measures (nreverse out-measures))
     ))
-
-
+	
 ;;; - examples - ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-
+;; we fill some slots of the DATA STRUCTURE and create the sequence
 (setq C2M_example_seq (make-instance 'C2M))
 (setf (C2M-chord C2M_example_seq) '(60 62 69 76 81))
 (setf (C2M-order C2M_example_seq) '(4 2 0 3 1))
-(setf (C2M-time-sig C2M_example_seq) '(7 8))
-(setf (C2M-beat-unit C2M_example_seq) 8)
+(setf (C2M-time-sig C2M_example_seq) '(5 8))
+(setf (C2M-beat-unit C2M_example_seq) 32)
+(setf (C2M-path C2M_example_seq) "~/Desktop/Test")
+(setf (C2M-name C2M_example_seq) "A1")
 
-
+;; Produces the different sequence of each method
 (chord-in-order C2M_example_seq)
 (grab-and-pass C2M_example_seq)
 (shrink-chord C2M_example_seq)
 (one-note-out C2M_example_seq)
 (deal-from-chord C2M_example_seq)
 
-;; to operate on a sequence produced, the "measures" slot must be populated
+;; clear measures slot
+(setq measures '())
+(setf (C2M-measures C2M_example_seq) measures)
+(print (C2M-measures C2M_example_seq))
+
 
 ;; I call a method to generate a sequence
-(setq measures (chord-in-order C2M_example_seq))
+(setq measures (grab-and-pass C2M_example_seq))
 ;; then I populate that slot with the previous result
 ;; so my data structure  has the measure slot full
 (setf (C2M-measures C2M_example_seq) measures)
 
-(setf (C2M-req-ratio C2M_example_seq) 3)
-;; I can call the requantize method to expand
-(setf (C2M-measures C2M_example_seq) (pack-in-measures (requantize C2M_example_seq) 3))
 
-(C2M-measures C2M_example_seq)
+
+(setf (C2M-beat-unit C2M_example_seq) 16)
+
+(setf (C2M-req-ratio C2M_example_seq) 2)
+;; I can call the requantize method to expand
+(setf (C2M-measures C2M_example_seq)
+      ;; measures are packed according to the relationship they expand
+      ;; and the unit used inside the original measure
+      (pack-in-measures (requantize C2M_example_seq) 10))
+
+
+
+(print (C2M-measures C2M_example_seq))
 (C2M-time-sig C2M_example_seq)
-;;(render-local C2M_example_seq)
+
+(setq bars(render-local C2M_example_seq))
+
+(midi-play (bars-to-sc (render-local C2M_example_seq)))
+
+(lp-display (bars-to-sc (render-local C2M_example_seq)))
+
+
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
