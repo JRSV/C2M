@@ -1,2 +1,2 @@
 # C2M
-LISP class to process music material with a 'some Chord -> to -> Measure' algorithm. 
+LISP class (built for Slippery Chicken) to process music material with a 'some Chord -> to -> Measure' algorithm. 
